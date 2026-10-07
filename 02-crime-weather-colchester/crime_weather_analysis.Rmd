@@ -1,0 +1,416 @@
+---
+title: "A Visual Analysis of Crime and Weather Trends in Colchester"
+author: "Vichayut Singhakiat"
+date: "2026-04-15"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+<style>
+  /* This makes the main Section 1, Section 2 headers massive with an underline */
+  h1 {
+    font-size: 38px !important;
+    font-weight: 800 !important;
+    color: #2C3E50 !important; 
+    border-bottom: 3px solid #18BC9C !important; 
+    padding-bottom: 10px;
+    margin-top: 40px;
+  }
+  
+  /* This makes the 1.1, 1.2 headers stand out and bold */
+  h2 {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #2C3E50 !important;
+    margin-top: 30px;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+# This hides annoying warning messages from your final report
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# **Section 1: Introduction**
+
+## **1.1 Overview**
+This report investigates the spatial and temporal distribution of crime in Colchester for the year 2025, alongside its potential correlation with local meteorological conditions. By integrating raw policing data with daily weather records, this analysis aims to identify seasonal patterns, categorize high-frequency offenses, and map geographic hotspots to better understand the environmental drivers of local criminal activity.
+
+## **1.2 Required Packages**
+To conduct this analysis, several specialized R packages are required for data manipulation, spatial mapping, and interactive visualization.
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(plotly)
+library(knitr)
+library(ggplot2)
+library(ggcorrplot)
+library(ggmap)
+```
+
+# **1.3 Data Sources & Ingestion**
+The analysis relies on two primary datasets: 2025 UK Police crime records for Colchester and Ogimet meteorological data. The initial data ingestion confirms the structural dimensions and available variables of both datasets.
+```{r}
+# Load the datasets
+crime_df <- read.csv("data/crime25.csv")
+temp_df <- read.csv("data/temp25.csv")
+
+# Verify structure
+dim(crime_df)
+dim(temp_df)
+
+```
+Running the dim() function verifies the successful ingestion of the data. Specifically, the raw policing dataset contains exactly 5,956 recorded incidents across 13 variables. Meanwhile, the meteorological dataset contains a complete year of observations, logging 365 days of data across 18 different environmental variables.
+
+# **Section 2: Data Preprocessing**
+
+Before any meaningful analysis can begin, it is essential to explore and preprocess the raw datasets to ensure data integrity. In this section, both the UK Police records and the Ogimet meteorological data are audited for missing values and structural inconsistencies. Unusable or heavily compromised variables are removed, while critical but incomplete data—such as missing crime outcomes—are carefully reclassified to prevent analytical bias. Finally, the datasets are formatted and aggregated to align their temporal structures, preparing them for the spatial mapping and statistical correlation phases that follow.
+
+## **2.1 Explore and Clean: Crime Dataset**
+```{r}
+
+# Create a table showing missing values in the crime dataset
+crime_missing <- data.frame(
+  Column = names(crime_df),
+  Missing_Values = colSums(is.na(crime_df))
+) %>% filter(Missing_Values > 0) # Only show columns that actually have missing data
+
+kable(crime_missing, caption = "Table 1: Missing Values in Colchester Crime Data", row.names = FALSE)
+
+#Clean crime dataset
+crime_clean <- crime_df %>%
+  # Drop the entirely empty 'context' column
+  select(-context) %>% 
+  filter(!is.na(lat) & !is.na(long)) %>%# Drop rows missing geographic data
+  mutate(
+    date = ym(date),# Format dates to a proper Date object
+    category = str_replace_all(category, "-", " "),    # Clean up categories for better plotting labels
+    category = str_to_title(category),
+    outcome_status = replace_na(outcome_status, "Status Unavailable")# Preserve data by re-categorizing NA outcomes rather than dropping rows
+ 
+  )
+```
+Data cleaning began with an audit of missing observations (Table 1). The completely empty context column was dropped, and any incidents missing latitude or longitude were removed to allow for accurate spatial mapping. Conversely, dropping rows with a missing outcome_status would have artificially deflated crime totals. To prevent this severe negative bias, these missing entries were instead reclassified as 'Status Unavailable' and store it as crime_clean.
+
+
+## **2.2 Explore and Clean: Weather Dataset**
+```{r}
+# Create a table showing missing values in the weather dataset
+temp_missing <- data.frame(
+  Column = names(temp_df),
+  Missing_Values = colSums(is.na(temp_df))
+) %>% filter(Missing_Values > 0) %>% arrange(desc(Missing_Values))
+
+kable(head(temp_missing), caption = "Table2: Missing Values in Weather Data", row.names = FALSE)
+
+#Clean Temp dataset
+temp_clean <- temp_df %>%
+  mutate(Date = ymd(Date)) %>%
+  # Drop ONLY the columns that have extreme missingness (>95%)
+  select(-c(PreselevHp, SnowDepcm)) %>% 
+  # Create a monthly identifier to match the crime data
+  mutate(Month_Year = floor_date(Date, "month")) %>%
+  # Aggregate daily data into monthly averages/totals
+  group_by(Month_Year) %>%
+  summarise(
+    Avg_Temp = mean(TemperatureCAvg, na.rm = TRUE),
+    Total_Rain = sum(Precmm, na.rm = TRUE),
+    Avg_Wind = mean(WindkmhInt, na.rm = TRUE),
+    Avg_Sun = mean(SunD1h, na.rm = TRUE),     
+    Avg_Cloud = mean(TotClOct, na.rm = TRUE),  
+    Avg_Vis = mean(VisKm, na.rm = TRUE) 
+  )
+```
+Following the Weather dataset, the daily meteorological dataset was cleaned and harmonized. Variables with extreme missingness (>95%), specifically PreselevHp and SnowDepcm, were dropped to avoid bias. Variables with negligible missingness, such as sunshine and cloud cover, were safely retained. Finally, to align with the temporal structure of the crime data, these daily weather observations were aggregated into monthly averages and totals to allow for accurate correlation analysis.
+
+# **Section 3: Crime in Colchester**
+
+This section explores the spatial and structural nature of crime in Colchester. We begin by visualizing the data geographically to identify high-density clusters, followed by an analysis of offense categories and the relationships between variables.
+
+## **3.1 Spatial EDA (The Leaflet Map):**
+To visualize the "where" behind the data, the following interactive Leaflet map displays the precise coordinates of reported incidents. This allows for an immediate identification of crime hotspots and urban patterns across the city.
+```{r,fig.cap="Figure 1: Spatial Distribution and Clustering of Recorded Crimes", fig.align='center'}
+library(ggmap)
+# Get a list of ALL unique crime categories in the dataset
+all_crimes <- unique(crime_clean$category)
+
+# Create a dynamic color palette that generates enough colors for all categories
+pal <- colorFactor(palette = rainbow(length(all_crimes)), domain = crime_clean$category)
+
+# Create map
+crime_map <- leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron, group = "Light Map") %>%
+  addTiles(group = "Default Map")
+
+# Add the crime clusters
+for(crime_type in all_crimes) {
+  layer_data <- crime_clean %>% filter(category == crime_type)
+  
+  crime_map <- crime_map %>%
+    addCircleMarkers(
+      data = layer_data,
+      ~long, ~lat, 
+      group = crime_type, 
+      color = ~pal(category),
+      radius = 4, 
+      stroke = FALSE, 
+      fillOpacity = 0.8,
+      clusterOptions = markerClusterOptions(),
+      popup = ~paste("<b>Crime:</b>", category, "<br><b>Location:</b>", street_name)
+    )
+}
+
+# Add one menu(Top Right) and one legend (Bottom Right)
+crime_map <- crime_map %>%
+  addLayersControl(
+    baseGroups = c("Light Map", "Default Map"),
+    overlayGroups = all_crimes,
+    options = layersControlOptions(collapsed = TRUE), # Collapses the menu
+    position = "topleft" # Menu stays top right
+  ) %>%
+  addLegend(
+    position = "bottomright", # Let's put the legend cleanly on the bottom right
+    pal = pal, 
+    values = all_crimes, 
+    title = "Crime Category"
+  )
+
+# Display the final clean map
+crime_map
+
+
+```
+The interactive leaflet map above provides an overall understanding of the spatial crime situation in Colchester for 2025. To handle the dense volume of over 5,000 data points without performance degradation, advanced spatial clustering was implemented. To interpret the map, the cluster markers utilize a density-based color gradient: green represents low-density areas (under 10 incidents), yellow indicates medium density (10–99 incidents), and orange/red highlights severe, massive hotspots (100+ incidents). By exploring the map, it is visually evident that criminal activity is not distributed evenly. Instead, the cluster densities reveal distinct hotspots where incidents are heavily concentrated, suggesting that policing resources are needed more intensely in specific geographic zones rather than uniformly across the jurisdiction.
+
+**(Interactive Feature: Graders may use the layer control menu in the top-right corner to toggle base maps and isolate specific crime categories. Because the overarching cluster colors represent volume rather than crime type, please click on the numbered cluster bubbles to dynamically zoom into the street level; this will break the clusters apart and reveal the individual, color-coded incidents and their popups)**
+
+
+## **3.2The crime categories**
+Beyond location, we must examine the "what." This subsection breaks down the frequency of specific crime types, providing a high-level view of which offenses are most prevalent in the dataset.
+```{r,fig.cap="Figure 2: Distribution of Total Incidents by Crime Category", fig.align='center'}
+# All Crimes Bar Plot (Descending Order)
+crime_counts <- crime_clean %>%
+  count(category, sort = TRUE)
+
+ggplot(crime_counts, aes(x = reorder(category, n), y = n, fill = category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 2.3, color = "black") +
+  coord_flip() +
+  theme_minimal() +
+  guides(fill = "none") +
+  labs(title = "Total Incidents by Crime Category in Colchester", x = "Crime Category", y = "Total Count")
+```
+The bar chart calculates the total volume of incidents across all recorded categories, establishing **Violent Crime** as the overwhelmingly dominant offense in Colchester for 2025 (approaching 2,500 recorded incidents). This is distantly followed by **Shoplifting** and **Anti-Social Behaviour**.
+
+
+## **3.3 Seasonal Two-Way Table**
+We examine the intersection of variables using a two-way table. This cross-tabulation allows us to identify correlations between crime categories and other dimensions (such as time or outcome), highlighting hidden variances in the profiling data.
+
+```{r}
+#Define seasons based on the month
+crime_seasonal <- crime_clean %>%
+  mutate(month_num = month(date),
+         season = case_when(
+           month_num %in% c(12, 1, 2) ~ "Winter",
+           month_num %in% c(3, 4, 5) ~ "Spring",
+           month_num %in% c(6, 7, 8) ~ "Summer",
+           month_num %in% c(9, 10, 11) ~ "Autumn"
+         ))
+
+#Create the Two-Way Table
+twoway_table <- crime_seasonal %>%
+  count(category, season) %>%
+  pivot_wider(names_from = season, values_from = n, values_fill = 0) %>%
+  # Ensure columns are in the correct seasonal order
+  select(category, Winter, Spring, Summer, Autumn) %>%
+  mutate(Total = Winter + Spring + Summer + Autumn) %>%
+  arrange(desc(Total))
+
+#Display the table with professional styling
+kable(twoway_table, caption = "Table 3: Two-way frequency table (Crime Category × Season)")
+```
+Several seasonal contrasts emerge from this data. Violent Crime shows a significant surge during the Summer months compared to Winter, a pattern mirrored by Anti-Social Behaviour and Bicycle Theft. Conversely, other categories remain relatively stable across the year.
+
+## **3.4 Crime per street Density Analysis**
+```{r,fig.cap="Figure 3: Density of Crime Concentration per Street", fig.align='center'}
+# Density Plot: Concentration of Crimes per Street
+street_density <- crime_clean %>% count(street_name)
+
+ggplot(street_density, aes(x = n)) +
+  geom_density(fill = "steelblue", alpha = 0.6, color = "darkblue") +
+  # Zooming the X-axis to 50 ensures the curve is readable by ignoring extreme retail outliers
+  coord_cartesian(xlim = c(0, 50)) + 
+  theme_bw() +
+  labs(
+    title = "Density Plot: Concentration of Crimes per Street",
+    x = "Total Crimes on a Single Street",
+    y = "Density"
+  )
+```
+The density plot illustrates the baseline spatial concentration of all crimes. The heavy right-skew and massive peak on the far-left side of the graph prove mathematically that the vast majority of streets in Colchester are exceptionally safe, experiencing fewer than 5 to 10 incidents annually. It visually confirms that crime is not a generalized city-wide issue, but rather a localized phenomenon.
+
+## **3.5Top 10 Crime Locations**
+While city-wide trends are useful, identifying the specific streets with the highest incident volume allows for a more targeted understanding of policing demand. This chart highlights the 10 most frequent crime locations in Colchester.
+```{r,fig.cap="Figure 4: Ranking of the Top 10 High-Incident Crime Locations", fig.align='center'}
+# 3.5 Top 10 crime locations
+crime_clean %>%
+  mutate(street = str_remove(street_name, "On or near ")) %>%
+  count(street, sort = TRUE) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = n, y = fct_reorder(street, n), fill = n)) +
+  geom_col() +
+  geom_text(aes(label = n), hjust = -0.15, size = 3) +
+  # Using the magma color scale for a professional look
+  scale_fill_viridis_c(option = "magma", guide = "none") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Top 10 Crime Locations in Colchester, 2025",
+       x = "Number of Recorded Crimes", 
+       y = NULL) +
+  theme_minimal(base_size = 11)
+```
+The bar chart identifies the specific 'snapped' locations with the highest incident volume. Notably, Shopping Areas, Supermarkets, and the Police Station emerge as the top three categories.
+
+# **Section 4: Temporal and Meteorological Analysis**
+This section shifts the focus from spatial distribution to temporal trends, examining how the environmental conditions in Colchester fluctuated throughout 2025 and whether these changes align with shifts in criminal activity.
+
+# **4.1 Daily Temperature Trends**
+To understand the baseline climate, we plot the daily average temperature. Because daily data can be "noisy" (jumping up and down constantly), a **LOESS smoothing line** (the blue curve) is added to reveal the true seasonal trend.
+```{r,fig.cap="Figure 5: Daily Temperature Profile with LOESS Seasonal Smoothing", fig.align='center'}
+
+#Change language into English
+Sys.setlocale("LC_TIME", "English")
+# Daily Temperature with Smoothing
+ggplot(temp_df, aes(x = as.Date(Date), y = TemperatureCAvg)) +
+  geom_line(color = "grey80", alpha = 0.6) + # The raw daily data
+  geom_smooth(method = "loess", color = "firebrick", se = TRUE) + # The smooth trend
+  theme_minimal() +
+  labs(
+    title = "Colchester Daily Temperature Profile (2025)",
+    subtitle = "Grey line shows daily variance; Red line shows smoothed seasonal trend",
+    x = "Date",
+    y = "Temperature (°C)"
+  )
+```
+This time series captures Colchester’s environmental "heartbeat" in 2025. The jagged grey line shows raw daily volatility, while the red LOESS smoothing line filters out the noise to reveal a clear seasonal rhythm. Temperatures begin a sustained climb in March, reaching a thermal plateau between July and August where averages consistently hover between 17°C and 20°C. This peak period marks the window of highest environmental energy, which we will now compare directly against crime volume.
+
+## **Section 4.2: Rainfall and Sunshine Trends**
+This chart explores the relationship between moisture and light. While temperature is predictable, rainfall in Colchester is notoriously erratic.
+```{r,fig.cap="Figure 6: Monthly Comparison of Total Precipitation and Sunshine Duration", fig.align='center'}
+ggplot(temp_clean, aes(x = Month_Year)) +
+  geom_bar(aes(y = Total_Rain / 10, fill = "Total Rainfall"), stat = "identity", alpha = 0.5) +
+  geom_line(aes(y = Avg_Sun, color = "Average Sunshine"), linewidth = 1.2) +
+  scale_y_continuous(
+    name = "Average Sunshine (Hours)",
+    sec.axis = sec_axis(~ . * 10, name = "Total Rainfall (mm)")
+  ) +
+  scale_fill_manual(values = c("Total Rainfall" = "steelblue")) +
+  scale_color_manual(values = c("Average Sunshine" = "gold")) +
+  theme_minimal() +
+  labs(
+    title = "Colchester Precipitation vs. Sunshine (2025)",
+    x = "Month",
+    fill = NULL,
+    color = NULL
+  ) +
+  theme(legend.position = "bottom")
+```
+This plot highlights the inverse relationship between moisture and light in Colchester. Sunshine duration peaks between April and June, reaching nearly nine hours per day well before the summer heat fully sets in. Rainfall, however, is far more volatile; after an exceptionally dry March, the year concludes with a massive 100mm spike in November. This sharp October "crossover"—where sunshine hours crash as rainfall climbs—creates a cold, wet environment that likely reduces the city's street-level activity and ambient population.
+
+# **Section 5: Environmental Correlates of Crime**
+This section quantifies the relationship between Colchester's weather and criminal frequency. By making these plots interactive, we can precisely identify which months drive the seasonal trends.
+
+## **5.1 Interactive Scatter & Correlation**
+The scatter plot visualizes the linear relationship between average temperature and crime volume, with each point representing a specific month in 2025. To quantify this link, we use a correlation coefficient ($r$), which measures the strength and direction of the relationship between these two variables.
+```{r,fig.cap="Figure 7: Correlation between Monthly Average Temperature and Total Crime Volume", fig.align='center'}
+# Prepare the unified data
+monthly_summary <- crime_clean %>%
+  mutate(Month_Year = floor_date(date, "month")) %>%
+  count(Month_Year, name = "Crime_Count") %>%
+  inner_join(temp_clean, by = "Month_Year")
+
+# Create the ggplot
+p1 <- ggplot(monthly_summary, aes(x = Avg_Temp, y = Crime_Count, 
+                                 text = paste("Month:", format(Month_Year, "%B"),
+                                              "<br>Crime Count:", Crime_Count,
+                                              "<br>Avg Temp:", round(Avg_Temp, 1), "°C"))) +
+  geom_point(size = 3, color = "#d95f02") +
+  geom_smooth(method = "lm", color = "black", se = FALSE, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Monthly Crime vs. Temperature",
+       x = "Average Temperature (°C)", y = "Total Incidents")
+
+# Turn it interactive
+ggplotly(p1, tooltip = "text")
+
+
+
+```
+This interactive scatter plot demonstrates the clear link between Colchester’s temperature and its monthly crime volume. The upward trajectory of the data points confirms a strong positive correlation, showing that as the city warms, criminal incidents consistently increase. By hovering over individual points, as seen in the example, you can inspect the specific figures for each month, which highlights how the peak environmental energy of the summer directly corresponds to the highest pressure on policing resources.
+
+## **5.2 Interactive Seasonal Variance **
+The interactive box plot highlights the spread of crime data within each season, allowing us to identify which times of year are the most volatile.
+
+```{r,fig.cap="Figure8: Seasonal Variance and Distribution of Monthly Incident Counts",fig.align='center'}
+# Add seasons
+monthly_summary <- monthly_summary %>%
+  mutate(season = case_when(
+    month(Month_Year) %in% c(12, 1, 2) ~ "Winter",
+    month(Month_Year) %in% c(3, 4, 5) ~ "Spring",
+    month(Month_Year) %in% c(6, 7, 8) ~ "Summer",
+    month(Month_Year) %in% c(9, 10, 11) ~ "Autumn"
+  ))
+
+p2 <- ggplot(monthly_summary, aes(x = season, y = Crime_Count, fill = season)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  theme_bw() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Seasonal Crime Distribution", x = "Season", y = "Monthly Incident Count") +
+  theme(legend.position = "none")
+
+ggplotly(p2)
+
+
+```
+
+While Winter is consistently low and stable, Summer exhibits both the highest median crime rate and the greatest variance. This interactive view allows for the inspection of specific "outlier" months that deviate from the seasonal norm.
+
+## **5.3 Correlation Heatmap**
+To summarize the interactions between all variables, this heatmap displays the correlation coefficients between crime and all recorded weather factors.
+```{r,fig.cap="Figure 9: Interactive Correlation Matrix of Meteorological and Criminal Variables",fig.align='center'}
+# Select variables for correlation
+total_corr <- monthly_summary %>%
+  select(Crime_Count, Avg_Temp, Total_Rain, Avg_Sun, Avg_Wind) %>%
+  cor(use = "complete.obs")
+
+# Create interactive heatmap
+plot_ly(x = colnames(total_corr), y = rownames(total_corr), 
+        z = total_corr, type = "heatmap", colors = "RdBu") %>%
+  layout(title = "Interactive Correlation Matrix: Crime vs. Weather")
+```
+
+The correlation matrix confirms a strong positive relationship ($r = 0.70$) between Average Temperature and Total Crimes. Additionally, a moderate positive correlation ($r = 0.58$) is observed with Average Sunlight. These coefficients statistically validate the seasonal surge seen in the time series, suggesting that warmer, sunnier months which typically encourage higher public occupancy and social interaction—correspond with an increase in both crime volume and policing demands. Interestingly, Rainfall shows a weak negative correlation, suggesting that while heat drives people out, rain slightly suppresses street-level activity.
+
+# **Section 6: Conclusion**
+
+This study concludes that crime in Colchester is both hyper-localized and environmentally driven. Interactive mapping revealed that incidents are not evenly distributed but are instead hyper-concentrated within specific retail and commercial hotspots. Furthermore, categorical profiling identified Violent Crime and Shoplifting as the primary drivers of the city's total incident volume. Most notably, the integration of meteorological data provided statistical evidence that crime frequency is seasonally driven, exhibiting a strong positive correlation ($r = 0.70$) with temperature. By focusing resources on these identified commercial corridors during high-energy summer months, local law enforcement can implement a more proactive, data-driven approach to urban public safety.
+
+# **Section 7: References**
+
+The data collection and analytical framework for this report were supported by the following official documentation and data providers:
+
+* **UK Police Crime Data**: Nicholas Tierney (2025). *ukpolice: Download Data from the UK Police Public Data API*. 
+    [https://ukpolice.njtierney.com/reference/ukp_crime.html](https://ukpolice.njtierney.com/reference/ukp_crime.html)
+
+* **Meteorological Data**: Bartosz Czernecki, Arkadiusz Głogowski, and Jakub Nowosad (2025). *climate: Methods for Accessing and Processing Free Meteorological Data*. 
+    [https://bczernecki.github.io/climate/reference/meteo_ogimet.html](https://bczernecki.github.io/climate/reference/meteo_ogimet.html)
+
+* **Primary Data Sources**: 
+    * Crime data provided by [data.police.uk](https://data.police.uk) under the Open Government Licence v3.0.
+    * Weather observations provided by [Ogimet](https://www.ogimet.com) via the `climate` R package.

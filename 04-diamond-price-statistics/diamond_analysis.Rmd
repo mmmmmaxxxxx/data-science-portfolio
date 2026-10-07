@@ -1,0 +1,520 @@
+---
+title: "Statistical Analysis of Diamond Prices"
+author: "Vichayut Singhakiat"
+date: "2026-01-10"
+output:
+  pdf_document:
+    extra_dependencies: float
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+#Install and Load Libraries
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(gridExtra)
+library(broom)
+```
+
+## 1.Data Exploration
+
+**(a). Summary of the variables in data set**
+```{r,echo=FALSE}
+#Load the dataset
+diamond_df <- read.csv("data/diamonds_sample.csv")
+attach(diamond_df)
+str(diamond_df)
+```
+ 
+The dataset contains 1,000 observations and 10 variables. The variables are categorized as follows:
+
+```{r,echo=FALSE}
+# Create the table
+var_types <- data.frame(
+  `Variable Type` = c("Quantitative", "Qualitative"),
+  Count = c(7, 3),
+  Names = c("Carat, Depth, Table, Price, x, y, z", "Cut, Color, Clarity")
+)
+
+# Render the table 
+kable(var_types, caption = "Summary of Variables in the Dataset")
+
+```
+
+Identify categories for qualitative variables:
+
+Cut:
+```{r,echo=FALSE}
+table(diamond_df$cut) #Create table for cut
+```
+
+Color:
+```{r,echo=FALSE}
+table(diamond_df$color)#Create table for color
+```
+\clearpage
+Clarity:
+```{r,echo=FALSE}
+table(diamond_df$clarity)#Create table for clarity
+```
+
+Based on the frequency tables above, the categories for the qualitative variables are as follows:
+
+* Cut: Ideal, Very Good, Premium, Good, and Fair
+
+* Color: D, E, F, G, H, I, and J
+
+* Clarity: IF, VVS1, VVS2, VS1, VS2, SI1, SI2, and I1
+
+
+**(b). Location and Spread of Variables**
+
+Quantitative Variables:
+```{r, echo=FALSE}
+# Select quantitative variables
+quantitative_vars <- diamond_df[, c("carat", "depth", "table", "price", "x", "y", "z")]
+
+# Create function to calculate mode
+get_mode <- function(x) {
+  mode <- unique(x)
+  mode[which.max(tabulate(match(x, mode)))]
+}
+
+quant_summary <- data.frame(
+  Mean = sapply(quantitative_vars, mean),
+  Median = sapply(quantitative_vars, median),
+  Mode = sapply(quantitative_vars, get_mode),
+  SD = sapply(quantitative_vars, sd),
+  Min = sapply(quantitative_vars, min),
+  Max = sapply(quantitative_vars, max),
+  Range = sapply(quantitative_vars, function(x) max(x) - min(x))
+)
+
+#Render the table
+
+kable(round(quant_summary, 2), 
+             caption = "Descriptive Statistics for Quantitative Variables")
+```
+
+Qualitative Variables:
+
+```{r,echo=FALSE}
+# Calculate Modes 
+cut_mode <- get_mode(diamond_df$cut)
+color_mode <- get_mode(diamond_df$color)
+clarity_mode <- get_mode(diamond_df$clarity)
+
+# Create a data frame for qualitative summaries
+qual_summary <- data.frame(
+  Variable = c("Cut", "Color", "Clarity"),
+  Location_Mode = c(cut_mode, color_mode, clarity_mode),
+  Spread_Range = c("5 Categories", "7 Categories", "8 Categories")
+)
+
+# Render the table
+kable(qual_summary, col.names = c("Variable", "Location (Mode)", "Spread (Categories)"),
+      caption = "Location and Spread for Qualitative Variables")
+
+```
+**Explanation of Location and Spread:**
+
+* Price Skewness: The Mean  is significantly higher than the Median, indicating a positive (right) skew.This suggests that while most diamonds are priced lower, a few high-value outliers are pulling the average upward.
+
+* Variable Spread: The high Standard Deviation for price and a High Range  highlight extreme price variability.
+
+* Most common diamond characteristic: For qualitative data, the mode identifies the most frequent characteristics are Ideal cut, G color, and VS2 clarity.
+
+\clearpage
+**(c). Visualizations for the distributions of variables**
+
+Histograms for quantitative variables:
+
+```{r,echo=FALSE, message=FALSE, fig.width=16, fig.height=16, fig.cap="\\label{fig:fig1} Distribution of Quantitative Variables"}
+#Create Histograms using ggplot
+p_price <- ggplot(diamond_df, aes(x = price)) + geom_histogram(fill = "steelblue", color = "white") + labs(title="Price",y = "Frequency")
+p_carat <- ggplot(diamond_df, aes(x = carat)) + geom_histogram(fill = "darkorange", color = "white") + labs(title="Carat",y = "Frequency")
+p_depth <- ggplot(diamond_df, aes(x = depth)) + geom_histogram(fill = "forestgreen", color = "white") + labs(title="Depth",y = "Frequency")
+p_table <- ggplot(diamond_df, aes(x = table)) + geom_histogram(fill = "purple", color = "white") + labs(title="Table",y = "Frequency")
+p_x <- ggplot(diamond_df, aes(x = x)) + geom_histogram(fill = "lightgreen", color = "white") + labs(title="Length (x)",y = "Frequency")
+p_y <- ggplot(diamond_df, aes(x = y)) + geom_histogram(fill = "lightpink", color = "white") + labs(title="Width (y)",y = "Frequency")
+p_z <- ggplot(diamond_df, aes(x = z)) + geom_histogram(fill = "darkred", color = "white") + labs(title="Depth (z)",y = "Frequency")
+
+#arrange the grid in 2 columns
+grid.arrange(p_price, p_carat, p_depth, p_table, p_x, p_y, p_z, ncol = 2)
+
+```
+
+\clearpage
+Bar charts for qualitative variables:
+
+```{r,echo=FALSE, message=FALSE, fig.width=8, fig.height=4.5, fig.cap="\\label{fig:fig2} Distribution of Qualitative Variables",fig.pos='H'}
+#Crate bar charts
+b_cut<- ggplot(diamond_df, aes(x = cut)) +
+  geom_bar(fill = "orange") +
+  labs(title = "Cut",y = "Frequency")
+
+b_color <- ggplot(diamond_df, aes(x = color)) +
+  geom_bar(fill = "blue") +
+  labs(title = "Color",y = "Frequency")
+
+b_clarity <- ggplot(diamond_df, aes(x = clarity)) +
+  geom_bar(fill = "red") +
+  labs(title = "Clarity",y = "Frequency")
+
+#arrange the grid in 3 columns
+grid.arrange(b_cut,b_color,b_clarity, ncol = 2)
+```
+
+**(d). Calculate correlation matrix between the numeric variables and find out which variables are strongly correlated with price** 
+
+```{r,echo=FALSE}
+#create object to store only numeric variable
+
+num_var <- diamond_df[, c("carat", "depth", "table", "price", "x", "y", "z")]
+
+#Calculate correlation
+cor_matrix <- cor(num_var) # calculate correlation
+
+#Display table
+kable(round(cor_matrix, 2), caption = "Correlation Matrix of Numeric Variables")
+```
+Based on the observed dataset, the correlation matrix shows a very strong relationship between Carat and Price ($r = 0.92$). This confirms that as the weight of the diamond increases, the price tends to rise significantly. This is followed closely by the physical dimensions (x, y, and z), which show identical high correlations with price (r = 0.89). In contrast, variables such as Table (r = 0.15) and Depth (r = 0.00) show almost no correlation with price.
+
+\clearpage
+
+## 2. Probability, probability distributions and confidence intervals
+
+**(a). Probability Calculations**
+
+  i. Probability price exceeds $10,000.
+
+```{r,echo=FALSE}
+
+# Count diamonds with price > 10000 and divide by total number of diamonds
+n_total <- nrow(diamond_df)
+count_d_exp <- sum(diamond_df$price > 10000)
+prob_d_exp <- count_d_exp / n_total
+
+print(prob_d_exp)
+
+```
+The analysis shows that the probability of a randomly chosen diamond's price exceeding $10,000 is 9%.
+
+  ii. Probability that a diamond is of Ideal cut.
+```{r,echo=FALSE}
+# Count diamonds with 'Ideal' cut and divide by total number of diamonds
+count_d_ideal <- sum(diamond_df$cut == "Ideal")
+prob_d_ideal <- count_d_ideal / n_total
+print(prob_d_ideal)
+```
+The analysis shows that the probability of a randomly chosen diamond being an Ideal cut is 40%.
+
+**(b). From a random sample of 20 diamonds, calculate the probability that more than 12 of them are Ideal cut.**
+
+```{r,echo=FALSE}
+# n = 20, p = probability of getting Ideal cut, We want P(X > 12)
+
+prob_more_than_12 <- 1 - pbinom(12,size=20,prob = prob_d_ideal)
+
+print(round(prob_more_than_12,2))
+
+```
+The analysis shows that in a random selection of 20 diamonds, there is a 2% probability that more than 12 will possess an 'Ideal' cut.
+
+**(c). Construct both 90% and 95% confidence intervals for the mean carat weight. See which interval is wider.**
+
+#The formula for a Confidence Interval (CI) is $\bar{x} \pm z \cdot \frac{s}{\sqrt{n}}$, where $\bar{x}$ is the sample mean, $s$ is the standard deviation, and $n$ is the sample size.
+
+```{r,echo=FALSE}
+n <- nrow(diamond_df) #Number of diamonds
+mean_carat <- mean(diamond_df$carat)#Calculate mean of carat 
+sd_carat <- sd(diamond_df$carat)#Calculate standard deviation of carat 
+se_carat <- sd_carat/sqrt(n)#Calculate standard error of carat 
+
+```
+
+90% CI:
+```{r,echo=FALSE}
+carat_ci_90 <- c(mean_carat-qnorm(0.95)*se_carat,mean_carat+qnorm(0.95)*se_carat)
+print(carat_ci_90)
+```
+95% CI:
+```{r,echo=FALSE}
+carat_ci_95 <- c(mean_carat-qnorm(0.975)*se_carat,mean_carat+qnorm(0.975)*se_carat)
+print(carat_ci_95)
+```
+The 95% confidence interval is wider because increasing the confidence level requires a larger critical value ($z \approx 1.96$ for 95% vs. $z \approx 1.645$ for 90%). To be more certain that the interval contains the true population mean, the "margin of error" must be increased, resulting in a broader range.
+
+\clearpage
+
+## 3. Hypothesis Tests
+
+**(a). Visualization**
+
+  i&ii.Visualizing the Price Distribution: Ideal and Very Good cuts
+  
+```{r,echo=FALSE, message=FALSE, fig.width=8.5, fig.height=3, fig.cap="\\label{fig:fig3}Comparison of Price Distributions of Ideal and Very Good Cut"}
+ideal_price <- diamond_df$price[diamond_df$cut == "Ideal"] #Filter diamond price that is Ideal cut
+very_good_price <- diamond_df$price[diamond_df$cut == "Very Good"]#Filter diamond price that is Very Good cut
+
+#Create Histogram
+# ggplot for Ideal Cut
+p_price_ideal <- ggplot(data.frame(price=ideal_price), aes(x = price)) +
+  geom_histogram(fill = "skyblue", color = "white", bins = 30) +
+  labs(title = "Price: Ideal Cut", x = "Price ($)", y = "Frequency") 
+# ggplot for Very Good Cut
+p_price_very_good <- ggplot(data.frame(price=very_good_price), aes(x = price)) +
+  geom_histogram(fill = "orange", color = "white", bins = 30) +
+  labs(title = "Price: Very Good Cut", x = "Price ($)", y = "Frequency") 
+#Display the histrograms in same column
+grid.arrange(p_price_ideal,p_price_very_good, ncol =2)
+
+```
+  
+  iii.Comparison of Histogram Distributions
+
+Based on the histograms, the data appears to be right-skewed (positively skewed) with a long tail extending toward the higher prices. Therefore, it is not normally distributed.
+  
+  iv.Create a new variable called ln(price) which is the logarithm transformation of price. 
+Repeat the steps i-iii, and determine whether the ln(price) values for diamonds with 
+an ‘Ideal’ or ‘Very Good’ cut appear more normally distributed. 
+
+**Log Transformation**
+```{r,echo=FALSE}
+#Create a new variable ln(price)
+diamond_df$`ln(price)` <- log(diamond_df$price)
+
+```
+
+Visualizing the ln(price) Distribution: Ideal and Very Good Cuts
+
+```{r,echo=FALSE, fig.width=8.5, fig.height=3, fig.cap="\\label{fig:fig4}Comparison of ln(price) Distributions of Ideal and Very Good Cut"}
+
+ideal_log <- diamond_df$`ln(price)`[diamond_df$cut == "Ideal"]#Filter diamond ln(price) that is Ideal cut
+
+very_good_log <- diamond_df$`ln(price)`[diamond_df$cut == "Very Good"]#Filter diamond ln(price) that is Very Good cut
+
+#Create Histogram
+# ggplot for Ideal Cut
+p_ln_price_ideal <- ggplot(data.frame(price=ideal_log), aes(x = price)) +
+  geom_histogram(fill = "skyblue", color = "white", bins = 30) +
+  labs(title = "ln(price): Ideal Cut", x = "ln(price)", y = "Frequency") 
+# ggplot for Very Good Cut
+p_ln_price_very_good <- ggplot(data.frame(price=very_good_log), aes(x = price)) +
+  geom_histogram(fill = "orange", color = "white", bins = 30) +
+  labs(title = "ln(price): Very Good Cut", x = "ln(price)", y = "Frequency") 
+
+grid.arrange(p_ln_price_ideal,p_ln_price_very_good, ncol =2)
+```
+
+Base on the histograms after applying the logarithm transformation, the distributions for both 'Ideal' and 'Very Good' cuts appear much more normally distributed. The histograms have lost their long right-side tails and now show a more symmetric.
+\newpage
+**(b). T-test on Raw Price (Ideal vs. Very Good)**
+
+**State the null and alternative hypotheses:**
+
+$H_0: \mu_{Ideal} = \mu_{VeryGood}$ (The average price is the same for both groups)
+
+$H_1: \mu_{Ideal} \neq \mu_{VeryGood}$ (The average price is different between the two groups)
+
+**Decide the significance level:**
+$\alpha = 0.05$
+
+**Formulate a test criterion:**
+Reject $H_0$ if p-value < $\alpha$
+
+Calculate using two sample t-test:
+\small
+```{r,echo=FALSE}
+test_data <- diamond_df[diamond_df$cut %in% c("Ideal", "Very Good"), ] #Filter only Ideal and Very Good data
+
+t_test_raw <- t.test(price ~ cut, data = test_data, alternative = "two.sided")
+
+t_test_raw
+```
+The calculated p-value is 0.03845, which is less than the significance level $\alpha = 0.05$ Therefore, we reject the null hypothesis ($H_0$) in favor of the alternative ($H_1$). There is sufficient evidence to suggest that the mean price of 'Ideal' diamonds is significantly different from 'Very Good' diamonds.
+
+  
+**(c). T-test on ln(price) (Ideal vs. Very Good)**
+
+**State the null and alternative hypotheses:**
+
+$H_0: \mu_{Ideal} = \mu_{VeryGood}$ (The average price is the same for both groups)
+
+$H_1: \mu_{Ideal} \neq \mu_{VeryGood}$ (The average price is different between the two groups)
+
+**Decide the significance level:**
+$\alpha = 0.05$
+
+**Formulate a test criterion:**
+Reject $H_0$ if p-value < $\alpha$
+
+Calculate using two sample t-test:
+```{r,echo=FALSE,}
+t_test_log <- t.test(`ln(price)`~ cut, data = test_data, alternative ="two.sided")
+
+t_test_log
+```
+The calculated p-value is 0.009041, which is less than the significance level $\alpha = 0.05$. Therefore, we reject the null hypothesis ($H_0$) in favor of the alternative ($H_1$). There is sufficient evidence to suggest that the mean $ln(price)$ of 'Ideal' diamonds is significantly different from 'Very Good' diamonds.
+
+**(d). Comparing Conclusions from (b) and (c)**
+
+Both tests lead to the rejection of the null hypothesis ($p < 0.05$), confirming a significant price difference between "Ideal" and "Very Good" cuts. However, the results from 3(c) are more robust. While the raw price data in 3(a) was heavily right skewed violating the normality assumption the log-transformation successfully corrected this skewness, making the second t-test more statistically valid.
+
+**(e). Independence test: Relationship Between Price Level and Clarity**
+
+Convert the price into a binary variable: high price (> \$5,000) vs low price ($\leq$ \$5,000)
+```{r,echo=FALSE}
+diamond_df$price_label <- ifelse(diamond_df$price>5000, "High", "Low")
+```
+
+**State the null and alternative hypotheses:**
+
+$H_0$: Price level and clarity level are independent. (This means clarity does not affect whether a diamond is expensive).
+
+$H_1$: Price level and clarity level are dependent. (This means there is a relationship between clarity and price category)
+
+**Decide the significance level:**
+$\alpha = 0.05$
+
+**Formulate a test criterion:**
+Reject $H_0$ if p-value < $\alpha$
+
+Create Contingency Table:
+```{r,echo=FALSE}
+price_clarity_table <- table(diamond_df$price_label, diamond_df$clarity)
+
+kable(price_clarity_table, caption = "Contingency Table of Price vs Clarity")
+
+```
+
+Calculate using Chi-Square test:
+```{r,echo=FALSE,warning=FALSE}
+chi_square_result <- chisq.test(price_clarity_table)
+
+chi_square_result
+
+```
+Based on the Chi-Square test result, the p-value is 0.08031, which is greater than the significance level $\alpha = 0.05$. Therefore, we fail to reject the null hypothesis ($H_0$). There is insufficient evidence to suggest that price category and clarity level are dependent. This means we conclude that clarity level does not have a statistically significant effect on whether a diamond's price exceeds $5,000.
+
+## 4. Linear Regression
+
+**(a). Scatter plot of ln(price) vs. ln(carat)**
+
+
+```{r,echo=FALSE,message=FALSE,fig.width=5, fig.height=2, fig.align='center', fig.cap="\\label{fig:fig5}Scatter Plot of Log-Price vs. Log-Carat"}
+#Create new variables (ln(carat)) using log transformation
+
+diamond_df$`ln(carat)` <- log(diamond_df$carat)
+
+#Create the scatter plot ln(price) vs. ln(carat) and add regression line
+ggplot(diamond_df, aes(x = `ln(carat)`, y = `ln(price)`)) +
+  geom_point(alpha = 0.5, color = "darkblue") +
+  geom_smooth(method = "lm", color = "red")+
+  labs(title = "Relationship between ln(price) and ln(carat)",
+       x = "Natural Log of Carat",
+       y = "Natural Log of Price")
+
+```
+\clearpage
+
+**(b). Fit a simple linear regression model with ln(price) as the response and ln(carat) as the predictor**
+
+Linear Regression model:
+```{r,echo=FALSE}
+# Fitting the simple linear regression model
+diamond_lm_re_model <- lm(`ln(price)`~`ln(carat)`, data = diamond_df)
+
+# Display the full summary
+summary(diamond_lm_re_model)
+```
+  i.Report the estimated slope and interpretation
+  
+Base on Linear Regression Model the estimated slope is 1.665 therefore its indicates that for a 1% increase in the carat (weight) of a diamond, the price is estimated to increase by approximately 1
+
+
+  ii.Test whether carat is a significant predictor
+  
+To test if carat is a significant predictor, we use the following hypotheses:
+
+Null Hypothesis ($H_0$): $\beta_1 = 0$ (Carat weight has no effect on price)
+
+Alternative Hypothesis ($H_1$): $\beta_1 \neq 0$ (Carat weight is a significant predictor of price)
+
+Base on summary of the linear regression model ln(carat) p-values is less than 2e-16. Since this p-value is significantly less than $\alpha = 0.05$, we reject the null hypothesis ($H_0$). This provides strong statistical evidence that carat weight is a significant predictor of diamond price.
+
+  iii.Report the coefficient of determination
+  
+Base on summary of the linear regression model the coefficient of determination ($R^2$) is 0.9346. This means that approximately 93.46% of the total variation in the response variable $ln(price)$ is explained by the linear relationship with the predictor variable $ln(carat)$.
+
+**(c). Multiple Linear Regression: ln(price) and ln(carat) + cut**
+\small
+
+Multiple Linear Regression model:
+```{r,echo=FALSE}
+# Fitting the multiple linear regression model
+diamond_multi_mlr_model <- lm(`ln(price)`~`ln(carat)`+cut, data = diamond_df)
+
+# Display the full summary
+summary(diamond_multi_mlr_model)
+
+```
+Estimated regression model formula is $\hat{y} = \beta_0 + \beta_1x_1 + \beta_2x_2 + \dots$
+
+Base on our multiple linear regression model the estimated model is:
+$$\widehat{ln(Price)} = 8.22078 + 1.67991 \cdot ln(Carat) + 0.12160 \cdot Cut_{Good} + 0.27124 \cdot Cut_{Ideal} + 0.22153 \cdot Cut_{Premium} + 0.23427 \cdot Cut_{VeryGood}$$
+**Note:** The 'Fair' cut is included in the Intercept. The coefficients for other cuts represent the price difference relative to a 'Fair' cut diamond.
+
+
+
+**(d). State which variables in Question (c) are statistically significant at the 1% level**
+
+Base on multiple linear regression model we obtained p-values of all variables as below:
+
+* ln(carat): $<2e-16$
+
+* cutGood: $0.0301$
+
+* cutIdeal: $1.60e-07$
+
+* cutPremium: $2.24e-05$
+
+* cutVery Good: $9.26e-06$
+
+To be significant at the 1% level, the p-value must be less than 0.01. 
+
+**Significant Variables**: $ln(carat)$, $Cut_{Ideal}$, $Cut_{Premium}$, and $Cut_{VeryGood}$ all have p-values $< 0.01$ and are therefore statistically significant at the 1% level.
+
+**Non-Significant Variable**: The variable $Cut_{Good}$ has a p-value of 0.0301. Since $0.0301 > 0.01$, $Cut_{Good}$ is not statistically significant at the 1% level (though it would be significant at the 5% level).
+
+
+
+**(e). Hypothesis Test for the Significance of ln(carat) in the Multiple Regression Model**
+
+To determine if ln(carat) remains a significant predictor while accounting for the effect of cut, we perform an individual t-test on its regression coefficient.
+
+
+**State the null and alternative hypotheses:**
+
+Null Hypothesis ($H_0$): $\beta_{ln(carat)} = 0$. This assumes that $ln(carat)$ has no linear relationship with $ln(price)$ when the diamond's cut is included in the model
+
+Alternative Hypothesis ($H_1$): $\beta_{ln(carat)} \neq 0$. This assumes that $ln(carat)$ is a significant predictor of $ln(price)$ even after controlling for the diamond's cut
+
+
+
+**(f). Conduct the hypothesis testing in (e) and report the result**
+
+To conduct this test, we examine the t-statistic and the corresponding p-value for $ln(carat)$ from the multiple regression output generated in Question 4(c).
+
+**Test Results: **
+
+* **p-value:** From the R summary, the p-value for ln(carat) is < 2e-16. 
+
+* **Significance Level:** $\alpha = 0.01$
+
+* **Conclusion: **Since the p-value < 2e-16 is much smaller than the significance level of $0.01$, we reject the null hypothesis ($H_0$). There is overwhelming statistical evidence to conclude that the weight of a diamond ($ln(carat)$) is a highly significant predictor of its price, even when the quality of the cut is taken into account.
